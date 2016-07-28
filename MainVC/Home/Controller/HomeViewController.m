@@ -21,7 +21,6 @@
 
 #import "Toast+UIView.h"
 #import "MovingAnnotationView.h"
-#import "EndPlaceView.h"
 
 typedef NS_ENUM(NSUInteger, DDState) {
      DDState_Init = 0,  //初始状态，显示选择终点
@@ -38,7 +37,7 @@ typedef NS_ENUM(NSUInteger, DDState) {
 
 @interface HomeViewController ()<MAMapViewDelegate,DDSearchViewControllerDelegate, DDDriverManagerDelegate, DDLocationViewDelegate>
 {
-      MAMapView *_mapView;
+     MAMapView *_mapView;
      UIView * _messageView;
      
      DDDriverManager * _driverManager;
@@ -51,7 +50,7 @@ typedef NS_ENUM(NSUInteger, DDState) {
      
      int _currentSearchLocation; //0 start, 1 end
      BOOL _needsFirstLocating;
-
+     
 }
 @property (nonatomic, strong) DDLocation * currentLocation;
 @property (nonatomic, strong) DDLocation * destinationLocation;
@@ -61,7 +60,7 @@ typedef NS_ENUM(NSUInteger, DDState) {
 @property (nonatomic, strong) DDLocationView *locationView;
 @property (nonatomic, assign) BOOL isLocating;
 
-@property (nonatomic, strong) EndPlaceView * endPlace;//终点标记
+@property (nonatomic, strong) MAPointAnnotation *userEndLocation;
 
 @end
 
@@ -106,6 +105,7 @@ typedef NS_ENUM(NSUInteger, DDState) {
                     weakSelf.currentLocation.cityCode = regeoResponse.regeocode.addressComponent.citycode;
                     weakSelf.isLocating = NO;
                     NSLog(@"currentLocation:%@", weakSelf.currentLocation);
+                    [weakSelf updatingDrivers];
                }
           }
      }];
@@ -115,7 +115,7 @@ typedef NS_ENUM(NSUInteger, DDState) {
 
 - (void)mapView:(MAMapView *)mapView didUpdateUserLocation:(MAUserLocation *)userLocation updatingLocation:(BOOL)updatingLocation
 {
-     if (_needsFirstLocating && updatingLocation)
+     if (_needsFirstLocating && self.currentLocation)
      {
           [self actionLocating:nil];
           _needsFirstLocating = NO;
@@ -124,6 +124,7 @@ typedef NS_ENUM(NSUInteger, DDState) {
 
 - (MAAnnotationView *)mapView:(MAMapView *)mapView viewForAnnotation:(id<MAAnnotation>)annotation
 {
+     
      /* 自定义userLocation对应的annotationView. */
      if ([annotation isKindOfClass:[MAUserLocation class]])
      {
@@ -142,8 +143,26 @@ typedef NS_ENUM(NSUInteger, DDState) {
           return annotationView;
      }
      
+     
      if ([annotation isKindOfClass:[MAPointAnnotation class]])
      {
+          /*
+           if (annotation == _userEndLocation) {
+           
+           static NSString *endStyleReuseIndetifier = @"endPoint";
+           MAAnnotationView *annotationView = [mapView dequeueReusableAnnotationViewWithIdentifier:endStyleReuseIndetifier];
+           if (annotationView == nil)
+           {
+           annotationView = [[MovingAnnotationView alloc] initWithAnnotation:annotation
+           reuseIdentifier:endStyleReuseIndetifier];
+           }
+           UIImage *image = [UIImage imageNamed:@"endPoint"];
+           annotationView.image = image;
+           annotationView.centerOffset = CGPointMake(0, -22);
+           annotationView.canShowCallout = YES;
+           return annotationView;
+           }
+           */
           static NSString *pointReuseIndetifier = @"driverReuseIndetifier";
           
           MovingAnnotationView *annotationView = (MovingAnnotationView *)[mapView dequeueReusableAnnotationViewWithIdentifier:pointReuseIndetifier];
@@ -152,32 +171,14 @@ typedef NS_ENUM(NSUInteger, DDState) {
                annotationView = [[MovingAnnotationView alloc] initWithAnnotation:annotation
                                                                  reuseIdentifier:pointReuseIndetifier];
           }
-          
           UIImage *image = [UIImage imageNamed:@"icon_taxi"];
-          
           annotationView.image = image;
           annotationView.centerOffset = CGPointMake(0, -22);
           annotationView.canShowCallout = YES;
           
           return annotationView;
      }
-     if ([annotation isKindOfClass:[MAPinAnnotationView class]])
-     {
-          static NSString *pointReuseIndetifier = @"EndPlaceViewReuseIndetifier";
-          
-          EndPlaceView *endPlaceView = (EndPlaceView *)[mapView dequeueReusableAnnotationViewWithIdentifier:pointReuseIndetifier];
-          if (endPlaceView == nil)
-          {
-               endPlaceView = [[EndPlaceView alloc] initWithAnnotation:annotation
-                                                                 reuseIdentifier:pointReuseIndetifier];
-          }
-          UIImage *image = [UIImage imageNamed:@"icon_taxi"];
-          endPlaceView.image = image;
-          endPlaceView.centerOffset = CGPointMake(0, -22);
-          endPlaceView.canShowCallout = YES;
-          return endPlaceView;
-     }
-
+     
      
      return nil;
 }
@@ -303,6 +304,7 @@ typedef NS_ENUM(NSUInteger, DDState) {
 {
      NSLog(@"actionCancel");
      [self setState:DDState_Init];
+     [self removeEndPlace];
 }
 
 - (void)actionCallTaxi:(UIButton *)sender
@@ -336,7 +338,7 @@ typedef NS_ENUM(NSUInteger, DDState) {
           
           [self resetMapToCenter:_mapView.userLocation.location.coordinate];
           [self searchReGeocodeWithCoordinate:_mapView.userLocation.location.coordinate];
-          [self updatingDrivers];
+          //          [self updatingDrivers];
      }
 }
 
@@ -350,6 +352,7 @@ typedef NS_ENUM(NSUInteger, DDState) {
 {
      NSLog(@"actionOnPay");
      [self setState:DDState_Finish_pay];
+     [self removeEndPlace];
 }
 
 - (void)actionOnEvaluate:(UIButton *)sender
@@ -426,7 +429,6 @@ typedef NS_ENUM(NSUInteger, DDState) {
 
 - (void)searchViewController:(DDSearchViewController *)searchViewController didSelectLocation:(DDLocation *)location
 {
-     NSLog(@"location: %@", location);
      
      [self.navigationController popViewControllerAnimated:YES];
      if (_currentSearchLocation == 0)
@@ -446,15 +448,34 @@ typedef NS_ENUM(NSUInteger, DDState) {
      {
           [self setState:DDState_Confirm_Destination];
      }
+     [self addEndPlace:location];
 }
 
 - (void)addEndPlace:(DDLocation *)location{
      
-//     _endPlace = [[EndPlaceView alloc] init];
-//     _endPlace.coordinate = location.coordinate;
-//     _endPlace.title = location.name;
-//     [_mapView addAnnotation:_endPlace];
+     [self removeEndPlace];
+     
+     _userEndLocation = [[MAPointAnnotation alloc] init];
+     _userEndLocation.coordinate = location.coordinate;
+     _userEndLocation.title = location.name;
+     _userEndLocation.subtitle = @"endPlace";
+     [_mapView addAnnotations:@[_userEndLocation]];
+     
+     //[_mapView showAnnotations:@[_userEndLocation] animated:YES];
+     /*
+      MAPointAnnotation * endPlace = [[MAPointAnnotation alloc] init];
+      endPlace.coordinate = location.coordinate;
+      endPlace.title = location.name;
+      endPlace.subtitle = @"endPlace";
+      [_mapView addAnnotation:endPlace];
+      */
+}
 
+- (void)removeEndPlace{
+     if (_userEndLocation) {
+          [_mapView removeAnnotation:_userEndLocation];
+          _userEndLocation = nil;
+     }
 }
 
 #pragma mark - Utility
@@ -587,116 +608,116 @@ typedef NS_ENUM(NSUInteger, DDState) {
 
 
 /*
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    // Do any additional setup after loading the view.
-
-     self.title = @"CH用车";
-     
-     _mapView = [[MAMapView alloc] initWithFrame:CGRectMake(0, 0, CGRectGetWidth(self.view.bounds), CGRectGetHeight(self.view.bounds))];
-     _mapView.delegate = self;
-     
-     _mapView.showsUserLocation = YES;    //YES 为打开定位，NO为关闭定位
-     //_mapView.showsLabels = NO;
-     [_mapView setUserTrackingMode: MAUserTrackingModeFollow animated:YES]; //地图跟着位置移动
-
-     [self.view addSubview:_mapView];
-     
-     //自定义定位图层
-     // 去除精度圈。
-     _mapView.customizeUserLocationAccuracyCircleRepresentation = YES;
-     
-     _mapView.userTrackingMode = MAUserTrackingModeFollow;
-     
-     //罗盘显示
-     _mapView.showsCompass = YES;
-     _mapView.compassOrigin = CGPointMake(CH_W-20-_mapView.compassSize.width, 84);
+ - (void)viewDidLoad {
+ [super viewDidLoad];
+ // Do any additional setup after loading the view.
  
-     //设置折线图
-     CLLocationCoordinate2D commonPolylineCoords[4];
-     commonPolylineCoords[0].latitude = 39.832136;
-     commonPolylineCoords[0].longitude = 116.34095;
-     
-     commonPolylineCoords[1].latitude = 39.832136;
-     commonPolylineCoords[1].longitude = 116.42095;
-     
-     commonPolylineCoords[2].latitude = 39.902136;
-     commonPolylineCoords[2].longitude = 116.42095;
-     
-//     commonPolylineCoords[3].latitude = 39.902136;
-//     commonPolylineCoords[3].longitude = 116.44095;
-     
-     //构造折线对象
-     MAPolyline *commonPolyline = [MAPolyline polylineWithCoordinates:commonPolylineCoords count:3];
-     
-     //在地图上添加折线对象
-     [_mapView addOverlay: commonPolyline];
-}
-
-- (void)didReceiveMemoryWarning {
-    [super didReceiveMemoryWarning];
-    // Dispose of any resources that can be recreated.
-}
-
-
-- (void)mapView:(MAMapView *)mapView didUpdateUserLocation:(MAUserLocation *)userLocation updatingLocation:(BOOL)updatingLocation{
-     if(updatingLocation)
-     {
-          //取出当前位置的坐标
-          NSLog(@"latitude : %f,longitude: %f",userLocation.coordinate.latitude,userLocation.coordinate.longitude);
-     }
-}
-
-//自定义定位图层
-//- (MAOverlayRenderer *)mapView:(MAMapView *)mapView rendererForOverlay:(id <MAOverlay>)overlay
-//{
-//     if (overlay == mapView.userLocationAccuracyCircle)
-//     {
-//          MACircleRenderer *accuracyCircleRenderer = [[MACircleRenderer alloc] initWithCircle:overlay];
-//          
-//          accuracyCircleRenderer.lineWidth    = 2.f;
-//          accuracyCircleRenderer.strokeColor  = [UIColor lightGrayColor];
-//          accuracyCircleRenderer.fillColor    = [UIColor colorWithRed:1 green:0 blue:0 alpha:.3];
-//          
-//          return accuracyCircleRenderer;
-//     }
-//     
-//     return nil;
-//}
-
-- (MAAnnotationView *)mapView:(MAMapView *)mapView viewForAnnotation:(id <MAAnnotation>)annotation
-{
-     if ([annotation isKindOfClass:[MAUserLocation class]])
-     {
-          static NSString *userLocationStyleReuseIndetifier = @"userLocationStyleReuseIndetifier";
-          MAAnnotationView *annotationView = [mapView dequeueReusableAnnotationViewWithIdentifier:userLocationStyleReuseIndetifier];
-          if (annotationView == nil)
-          {
-               annotationView = [[MAAnnotationView alloc] initWithAnnotation:annotation
-                                                             reuseIdentifier:userLocationStyleReuseIndetifier];
-          }
-          annotationView.image = [UIImage imageNamed:@"icon_passenger"];
-          
-          return annotationView;
-     }
-     if ([annotation isKindOfClass:[MAPointAnnotation class]])
-     {
-          static NSString *pointReuseIndetifier = @"driverReuseIndetifier";
-          
-          MovingAnnotationView *annotationView = (MovingAnnotationView *)[mapView dequeueReusableAnnotationViewWithIdentifier:pointReuseIndetifier];
-          if (annotationView == nil){
-               annotationView = [[MovingAnnotationView alloc] initWithAnnotation:annotation
-                                                                 reuseIdentifier:pointReuseIndetifier];
-          }
-          UIImage *image = [UIImage imageNamed:@"icon_taxi"];
-          annotationView.image = image;
-          annotationView.centerOffset = CGPointMake(0, -22);
-          annotationView.canShowCallout = YES;
-          return annotationView;
-     }
-     return nil;
-}
-*/
+ self.title = @"CH用车";
+ 
+ _mapView = [[MAMapView alloc] initWithFrame:CGRectMake(0, 0, CGRectGetWidth(self.view.bounds), CGRectGetHeight(self.view.bounds))];
+ _mapView.delegate = self;
+ 
+ _mapView.showsUserLocation = YES;    //YES 为打开定位，NO为关闭定位
+ //_mapView.showsLabels = NO;
+ [_mapView setUserTrackingMode: MAUserTrackingModeFollow animated:YES]; //地图跟着位置移动
+ 
+ [self.view addSubview:_mapView];
+ 
+ //自定义定位图层
+ // 去除精度圈。
+ _mapView.customizeUserLocationAccuracyCircleRepresentation = YES;
+ 
+ _mapView.userTrackingMode = MAUserTrackingModeFollow;
+ 
+ //罗盘显示
+ _mapView.showsCompass = YES;
+ _mapView.compassOrigin = CGPointMake(CH_W-20-_mapView.compassSize.width, 84);
+ 
+ //设置折线图
+ CLLocationCoordinate2D commonPolylineCoords[4];
+ commonPolylineCoords[0].latitude = 39.832136;
+ commonPolylineCoords[0].longitude = 116.34095;
+ 
+ commonPolylineCoords[1].latitude = 39.832136;
+ commonPolylineCoords[1].longitude = 116.42095;
+ 
+ commonPolylineCoords[2].latitude = 39.902136;
+ commonPolylineCoords[2].longitude = 116.42095;
+ 
+ //     commonPolylineCoords[3].latitude = 39.902136;
+ //     commonPolylineCoords[3].longitude = 116.44095;
+ 
+ //构造折线对象
+ MAPolyline *commonPolyline = [MAPolyline polylineWithCoordinates:commonPolylineCoords count:3];
+ 
+ //在地图上添加折线对象
+ [_mapView addOverlay: commonPolyline];
+ }
+ 
+ - (void)didReceiveMemoryWarning {
+ [super didReceiveMemoryWarning];
+ // Dispose of any resources that can be recreated.
+ }
+ 
+ 
+ - (void)mapView:(MAMapView *)mapView didUpdateUserLocation:(MAUserLocation *)userLocation updatingLocation:(BOOL)updatingLocation{
+ if(updatingLocation)
+ {
+ //取出当前位置的坐标
+ NSLog(@"latitude : %f,longitude: %f",userLocation.coordinate.latitude,userLocation.coordinate.longitude);
+ }
+ }
+ 
+ //自定义定位图层
+ //- (MAOverlayRenderer *)mapView:(MAMapView *)mapView rendererForOverlay:(id <MAOverlay>)overlay
+ //{
+ //     if (overlay == mapView.userLocationAccuracyCircle)
+ //     {
+ //          MACircleRenderer *accuracyCircleRenderer = [[MACircleRenderer alloc] initWithCircle:overlay];
+ //
+ //          accuracyCircleRenderer.lineWidth    = 2.f;
+ //          accuracyCircleRenderer.strokeColor  = [UIColor lightGrayColor];
+ //          accuracyCircleRenderer.fillColor    = [UIColor colorWithRed:1 green:0 blue:0 alpha:.3];
+ //
+ //          return accuracyCircleRenderer;
+ //     }
+ //
+ //     return nil;
+ //}
+ 
+ - (MAAnnotationView *)mapView:(MAMapView *)mapView viewForAnnotation:(id <MAAnnotation>)annotation
+ {
+ if ([annotation isKindOfClass:[MAUserLocation class]])
+ {
+ static NSString *userLocationStyleReuseIndetifier = @"userLocationStyleReuseIndetifier";
+ MAAnnotationView *annotationView = [mapView dequeueReusableAnnotationViewWithIdentifier:userLocationStyleReuseIndetifier];
+ if (annotationView == nil)
+ {
+ annotationView = [[MAAnnotationView alloc] initWithAnnotation:annotation
+ reuseIdentifier:userLocationStyleReuseIndetifier];
+ }
+ annotationView.image = [UIImage imageNamed:@"icon_passenger"];
+ 
+ return annotationView;
+ }
+ if ([annotation isKindOfClass:[MAPointAnnotation class]])
+ {
+ static NSString *pointReuseIndetifier = @"driverReuseIndetifier";
+ 
+ MovingAnnotationView *annotationView = (MovingAnnotationView *)[mapView dequeueReusableAnnotationViewWithIdentifier:pointReuseIndetifier];
+ if (annotationView == nil){
+ annotationView = [[MovingAnnotationView alloc] initWithAnnotation:annotation
+ reuseIdentifier:pointReuseIndetifier];
+ }
+ UIImage *image = [UIImage imageNamed:@"icon_taxi"];
+ annotationView.image = image;
+ annotationView.centerOffset = CGPointMake(0, -22);
+ annotationView.canShowCallout = YES;
+ return annotationView;
+ }
+ return nil;
+ }
+ */
 
 ///**
 // * @brief 根据overlay生成对应的Renderer
@@ -705,7 +726,7 @@ typedef NS_ENUM(NSUInteger, DDState) {
 // * @return 生成的覆盖物Renderer
 // */
 //- (MAOverlayRenderer *)mapView:(MAMapView *)mapView rendererForOverlay:(id <MAOverlay>)overlay{
-//     
+//
 //     if ([overlay isKindOfClass:[MAPolyline class]])
 //     {
 //          MAPolygonRenderer *polylineRenderer = [[MAPolygonRenderer alloc] initWithPolygon:overlay];
